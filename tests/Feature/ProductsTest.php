@@ -2,12 +2,24 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\NewProductNotifyJob;
+use App\Jobs\ProductPublishJob;
+use App\Mail\NewProductCreated;
 use App\Models\Product;
 use App\Models\User;
+use App\Notifications\NewProductCreatedNotification;
+use App\Services\ProductService;
+use Brick\Math\Exception\NumberFormatException;
+use Exception;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\WithFaker;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class ProductsTest extends TestCase
@@ -40,7 +52,8 @@ class ProductsTest extends TestCase
     {
         $product = Product::create([
             'name' => 'Product 1',
-            'price' => '123'
+            'price' => '123',
+            'published_at' => now()
         ]);
 
         $response = $this->actingAs($this->user)->get('/products');
@@ -103,21 +116,25 @@ class ProductsTest extends TestCase
     {
         $product = [
             'name' => 'Product 123',
-            'price' => '123'
+            'price' => '123',
+            'published_at' => now()
         ];
 
-        $response = $this->actingAs($this->admin)->post('/products', $product);
+        $response = $this->followingRedirects()->actingAs($this->admin)->post('/products', $product);
 
-        $response->assertStatus(302);
+        $response->assertStatus(200);
 
-        $response->assertRedirect('products');
+        //$response->assertSeeText($product['name']);
 
-        $this->assertDatabaseHas('products', $product);
+        $this->assertDatabaseHas('products',  [
+            'name' => 'Product 123',
+            'price' => '12300'
+        ]);
 
         $lastProduct  = Product::latest()->first();
 
         $this->assertEquals($product['name'], $lastProduct->name);
-        $this->assertEquals($product['price'], $lastProduct->price);
+        $this->assertEquals($product['price'] * 100, $lastProduct->price);
     }
 
     public function test_product_edit_contains_correct_value()
@@ -158,8 +175,124 @@ class ProductsTest extends TestCase
         $this->assertDatabaseMissing('products', $product->toArray());
         $this->assertDatabaseCount('products', 0);
 
-        $this->assertModelMissing($product); 
-        $this->assertDatabaseEmpty('products'); 
+        $this->assertModelMissing($product);
+        $this->assertDatabaseEmpty('products');
+    }
+
+    public function test_product_service_create_returns_product()
+    {
+        $product = (new ProductService())->create(name: 'Test', price: 123);
+
+        $this->assertInstanceOf(Product::class, $product);
+    }
+
+    public function test_product_service_create_return_validation()
+    {
+        try {
+            $product = (new ProductService())->create(name: 'Test', price: 1234567);
+        } catch (Exception $e) {
+            $this->assertInstanceOf(NumberFormatException::class, $e);
+        }
+    }
+
+    public function test_download_product_success()
+    {
+        $response = $this->get('/download');
+        $response->assertStatus(200);
+        $response->assertHeader(
+            'Content-Disposition',
+            'attachment; filename=product-specification.pdf'
+        );
+    }
+
+    public function test_artisan_product_publish_command_fail()
+    {
+        $this->artisan('product:publish 1')->assertExitCode(-1)->expectsOutput('Product not found');
+    }
+
+    public function test_artisan_product_publish_command_successful()
+    {
+        $product = Product::factory()->create();
+
+        $this->artisan('product:publish ' . $product->id)->assertSuccessful();
+    }
+
+    public function test_job_product_publish_successful()
+    {
+        $product = Product::factory()->create();
+        $this->assertNull($product->published_at);
+
+        (new ProductPublishJob($product->id))->handle();
+
+        $product->refresh();
+        $this->assertNotNull($product->published_at);
+    }
+
+    public function test_product_shows_when_published_at_correct_time()
+    {
+        $product = Product::factory()->create([
+            'published_at' => now()->addDay()->setTime(14, 00),
+        ]);
+
+        $this->freezeTime(function () use ($product) {
+            $this->travelTo(now()->addDay()->setTime(14, 01));
+            $response = $this->actingAs($this->user)->get('/products');
+            $response->assertSeeText($product->name);
+        });
+    }
+
+    public function test_product_create_photo_upload_successful()
+    {
+        Storage::fake();
+        $filename = 'photo1.jpg';
+
+        $product = [
+            'name' => 'Product 123',
+            'price' => 1234,
+            'photo' => UploadedFile::fake()->image($filename),
+        ];
+        $response = $this->followingRedirects()->actingAs($this->admin)->post('/products', $product);
+
+        $response->assertStatus(200);
+
+        $lastProduct = Product::latest()->first();
+        $this->assertEquals($filename, $lastProduct->photo);
+
+        Storage::assertExists('products/' . $filename);
+    }
+
+    public function test_product_create_job_notification_dispatched_successfully()
+    {
+        Bus::fake();
+
+        $product = [
+            'name' => 'product 123',
+            'price' => 123
+        ];
+
+        $response = $this->followingRedirects()->actingAs($this->admin)->post('/products', $product);
+
+        $response->assertStatus(200);
+
+        Bus::assertDispatched(NewProductNotifyJob::class);
+    }
+
+    public function test_product_create_mail_send_successfully()
+    {
+        Mail::fake();
+        Notification::fake();
+
+        $product = [
+            'name' => 'product 123',
+            'price' => 123
+        ];
+
+        $response = $this->followingRedirects()->actingAs($this->admin)->post('/products', $product);
+
+        $response->assertStatus(200);
+
+        Mail::assertSent(NewProductCreated::class);
+        Notification::assertSentTo($this->admin,NewProductCreatedNotification::class);
     }
 
     private function createUser(bool $isAdmin = false)

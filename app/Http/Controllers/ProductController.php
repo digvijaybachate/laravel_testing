@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreProductRequest;
 use App\Http\Requests\UpdateProductRequest;
+use App\Jobs\NewProductNotifyJob;
 use App\Models\Product;
 use Illuminate\Http\Request;
 use Illuminate\Contracts\View\View;
@@ -13,7 +14,7 @@ class ProductController extends Controller
 {
     public function index(): View
     {
-        $products = Product::paginate(10);
+        $products = Product::published()->paginate(10);
         return view('products.index', compact('products'));
     }
 
@@ -24,7 +25,17 @@ class ProductController extends Controller
 
     public function store(StoreProductRequest $request): RedirectResponse
     {
-        Product::create($request->validated());
+        $productData = $request->validated();
+
+        if ($request->hasFile('photo')) {
+            $filename = $request->file('photo')->getClientOriginalName();
+            $request->file('photo')->storeAs('products', $filename);
+            $productData['photo'] = $filename;
+        }
+
+        $product = Product::create($productData);
+
+        NewProductNotifyJob::dispatch($product);
 
         return redirect()->route('products.index');
     }
@@ -46,5 +57,10 @@ class ProductController extends Controller
         $product->delete();
 
         return redirect()->route('products.index');
+    }
+
+    public function download()
+    {
+        return response()->download(public_path('files/product-specification.pdf'));
     }
 }

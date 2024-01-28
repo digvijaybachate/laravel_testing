@@ -16,7 +16,7 @@ test('homepage contains empty table', function () {
 
 
 test('homepage contains non empty table', function () {
-    $product = Product::factory()->create();
+    $product = Product::factory()->create(['published_at' => now()]);
 
     $this->actingAs($this->user)
         ->get('/products')
@@ -37,9 +37,12 @@ test('create product successful', function () {
         ->post('/products', $product)
         ->assertRedirect('products');
 
-    $this->assertDatabaseHas('products', $product);
+    $this->assertDatabaseHas('products', [
+        'name' => 'Product 123',
+        'price' => 123400
+    ]);
 
     $lastProduct = Product::latest()->first();
 
-    expect($lastProduct->name)->toBe($product['name'])->and($lastProduct->price)->toBe($product['price']);
+    expect($lastProduct->name)->toBe($product['name'])->and($lastProduct->price)->toBe($product['price'] * 100);
 });

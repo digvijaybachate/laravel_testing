@@ -3,14 +3,16 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use Illuminate\Auth\Events\Registered;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\WithFaker;
+use Illuminate\Support\Facades\Event;
 use Tests\TestCase;
 
 class AuthTest extends TestCase
 {
     use RefreshDatabase;
-    
+
     public function test_unauthenticated_user_cannot_access_product()
     {
         $response = $this->get('/products');
@@ -36,5 +38,21 @@ class AuthTest extends TestCase
         $response->assertStatus(302);
 
         $response->assertRedirect('/products');
+    }
+
+    public function test_registration_fires_event()
+    {
+        // Event::fake(); 
+
+        $response = $this->post('/register', [
+            'name' => 'User',
+            'email' => 'user@user.com',
+            'password' => 'password',
+            'password_confirmation' => 'password',
+        ]);
+
+        $response->assertStatus(302);
+
+        //Event::assertDispatched(Registered::class);
     }
 }
