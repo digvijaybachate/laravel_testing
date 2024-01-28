@@ -42,7 +42,7 @@ class AuthTest extends TestCase
 
     public function test_registration_fires_event()
     {
-        // Event::fake(); 
+        Event::fake(); 
 
         $response = $this->post('/register', [
             'name' => 'User',
@@ -53,6 +53,6 @@ class AuthTest extends TestCase
 
         $response->assertStatus(302);
 
-        //Event::assertDispatched(Registered::class);
+        Event::assertDispatched(Registered::class);
     }
 }
